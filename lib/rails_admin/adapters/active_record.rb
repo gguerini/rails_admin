@@ -15,8 +15,11 @@ module RailsAdmin
       end
 
       def get(id, scope = scoped)
-        object = scope.where(primary_key => id).first
-        return unless object
+        begin
+          object = scope.find(id)
+        rescue ::ActiveRecord::RecordNotFound
+          return nil
+        end
 
         object.extend(ObjectExtension)
       end
@@ -33,11 +36,11 @@ module RailsAdmin
         scope ||= scoped
         scope = scope.includes(options[:include]) if options[:include]
         scope = scope.limit(options[:limit]) if options[:limit]
-        scope = scope.where(primary_key => options[:bulk_ids]) if options[:bulk_ids]
+        scope = bulk_scope(scope, options) if options[:bulk_ids]
         scope = query_scope(scope, options[:query]) if options[:query]
         scope = filter_scope(scope, options[:filters]) if options[:filters]
         scope = scope.send(Kaminari.config.page_method_name, options[:page]).per(options[:per]) if options[:page] && options[:per]
-        scope = scope.reorder("#{options[:sort]} #{options[:sort_reverse] ? 'asc' : 'desc'}") if options[:sort]
+        scope = sort_scope(scope, options) if options[:sort]
         scope
       end
 
@@ -105,6 +108,33 @@ module RailsAdmin
 
       def adapter_supports_joins?
         true
+      end
+
+    private
+
+      def bulk_scope(scope, options)
+        if primary_key.is_a? Array
+          options[:bulk_ids].map do |id|
+            scope.where(primary_key.zip(CompositePrimaryKeys::CompositeKeys.parse(id)).to_h)
+          end.reduce(&:or)
+        else
+          scope.where(primary_key => options[:bulk_ids])
+        end
+      end
+
+      def sort_scope(scope, options)
+        direction = options[:sort_reverse] ? :asc : :desc
+        case options[:sort]
+        when String, Symbol
+          scope.reorder("#{options[:sort]} #{direction}")
+        when Array
+          scope.reorder(options[:sort].zip(Array.new(options[:sort].size) { direction }).to_h)
+        when Hash
+          scope.reorder(options[:sort].map { |table_name, column| "#{table_name}.#{column}" }.
+                                       zip(Array.new(options[:sort].size) { direction }).to_h)
+        else
+          raise ArgumentError.new("Unsupported sort value: #{options[:sort]}")
+        end
       end
 
       class WhereBuilder

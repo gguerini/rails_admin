@@ -29,12 +29,16 @@ module RailsAdmin
             true
           end
 
-          def associated_primary_key
-            association.primary_key
+          register_instance_option :allowed_methods do
+            nested_form ? [method_name] : Array(association.foreign_key)
           end
 
           def selected_id
-            bindings[:object].send(association.key_accessor)
+            if association.foreign_key.is_a? Array
+              association.foreign_key.map { |attribute| bindings[:object].safe_send(attribute) }.to_composite_keys.to_s
+            else
+              bindings[:object].safe_send(association.key_accessor)
+            end
           end
 
           def method_name
@@ -43,6 +47,14 @@ module RailsAdmin
 
           def multiple?
             false
+          end
+
+          def parse_input(params)
+            return unless params[method_name].present? && association.foreign_key.is_a?(Array) && !nested_form
+
+            association.foreign_key.zip(CompositePrimaryKeys::CompositeKeys.parse(params.delete(method_name))).each do |key, value|
+              params[key] = value
+            end
           end
         end
       end
